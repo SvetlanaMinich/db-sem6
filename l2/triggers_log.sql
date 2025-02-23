@@ -1,0 +1,39 @@
+CREATE TABLE STUDENT_LOG (
+    LOG_ID NUMBER PRIMARY KEY,
+    STUDENT_ID  NUMBER NOT NULL,
+    ACTION_TYPE VARCHAR2(10) NOT NULL,
+    OLD_GROUP NUMBER,
+    NEW_GROUP NUMBER,
+    OLD_NAME VARCHAR2(100),
+    NEW_NAME VARCHAR2(100),
+    CHANGE_DATE DATE DEFAULT SYSDATE
+);
+
+CREATE SEQUENCE log_seq START WITH 1 INCREMENT BY 1;
+
+CREATE OR REPLACE TRIGGER log_student_changes
+AFTER INSERT OR UPDATE OR DELETE ON STUDENTS
+FOR EACH ROW
+DECLARE
+    v_action VARCHAR2(10);
+BEGIN
+    IF INSERTING THEN 
+            v_action := 'INSERT';
+            INSERT INTO STUDENT_LOG (LOG_ID, STUDENT_ID, ACTION_TYPE, NEW_GROUP, NEW_NAME)
+            VALUES (log_seq.NEXTVAL, :NEW.ID, v_action, :NEW.GROUPS_ID, :NEW.NAME);
+    ELSIF UPDATING THEN
+            v_action := 'UPDATE';
+            INSERT INTO STUDENT_LOG (LOG_ID, STUDENT_ID, ACTION_TYPE, 
+                                     OLD_GROUP, NEW_GROUP, 
+                                     OLD_NAME, NEW_NAME)
+            VALUES (log_seq.NEXTVAL, :OLD.ID, v_action,
+                   :OLD.GROUPS_ID, :NEW.GROUPS_ID,
+                   :OLD.NAME, :NEW.NAME);
+    ELSIF DELETING THEN
+            v_action := 'DELETE';
+            INSERT INTO STUDENT_LOG (LOG_ID, STUDENT_ID, ACTION_TYPE, 
+                                     OLD_GROUP, OLD_NAME)
+            VALUES (log_seq.NEXTVAL, :OLD.ID, v_action,
+                   :OLD.GROUPS_ID, :OLD.NAME);
+    END IF;
+END;
