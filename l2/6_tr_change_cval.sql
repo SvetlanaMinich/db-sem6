@@ -1,0 +1,58 @@
+CREATE OR REPLACE TRIGGER change_groups_cval_by_student
+AFTER INSERT OR UPDATE OR DELETE ON STUDENTS
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        UPDATE GROUPS
+        SET C_VAL = C_VAL + 1
+        WHERE ID = :NEW.GROUPS_ID;
+    ELSIF UPDATING THEN
+        UPDATE GROUPS
+        SET C_VAL = C_VAL + 1
+        WHERE ID = :NEW.GROUPS_ID;
+
+        UPDATE GROUPS
+        SET C_VAL = C_VAL - 1
+        WHERE ID = :OLD.GROUPS_ID;
+    ELSE
+        UPDATE GROUPS
+        SET C_VAL = C_VAL - 1
+        WHERE ID = :OLD.GROUPS_ID;
+    END IF;
+END;
+
+
+-- TEST
+BEGIN
+    INSERT INTO GROUPS (ID, NAME, C_VAL) VALUES (101, 'Group 1', 0);
+    INSERT INTO GROUPS (ID, NAME, C_VAL) VALUES (102, 'Group 2', 0);
+
+    INSERT INTO STUDENTS (ID, NAME, GROUPS_ID) VALUES (1, 'Student 1', 101);
+    INSERT INTO STUDENTS (ID, NAME, GROUPS_ID) VALUES (2, 'Student 1', 101);
+
+    DBMS_OUTPUT.PUT_LINE('После вставки:');
+    FOR rec IN (SELECT * FROM GROUPS) LOOP
+        DBMS_OUTPUT.PUT_LINE('Group ID: ' || rec.ID || ', C_VAL: ' || rec.C_VAL);
+    END LOOP;
+    
+    UPDATE STUDENTS SET GROUPS_ID = 102 WHERE ID = 1;
+    DBMS_OUTPUT.PUT_LINE('После обновления:');
+    FOR rec IN (SELECT * FROM GROUPS) LOOP
+        DBMS_OUTPUT.PUT_LINE('Group ID: ' || rec.ID || ', C_VAL: ' || rec.C_VAL);
+    END LOOP;
+    
+    DELETE FROM STUDENTS WHERE ID = 1;
+    DBMS_OUTPUT.PUT_LINE('После удаления:');
+    FOR rec IN (SELECT * FROM GROUPS) LOOP
+        DBMS_OUTPUT.PUT_LINE('Group ID: ' || rec.ID || ', C_VAL: ' || rec.C_VAL);
+    END LOOP;
+
+    DELETE FROM GROUPS;
+    DELETE FROM STUDENTS;
+    DELETE FROM STUDENT_LOG;
+END;
+
+SELECT * FROM GROUPS;
+SELECT * FROM STUDENTS;
+
+DROP TRIGGER change_groups_cval_by_student;
