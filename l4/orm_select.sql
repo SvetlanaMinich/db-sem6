@@ -1,178 +1,92 @@
-CREATE OR REPLACE FUNCTION execute_select(p_json CLOB) RETURN SYS_REFCURSOR IS
-    v_cursor SYS_REFCURSOR;
-    v_query VARCHAR2(32767);
+CREATE OR REPLACE FUNCTION execute_select(p_json IN CLOB)
+RETURN SYS_REFCURSOR
+AS
+    l_cursor        SYS_REFCURSOR;
+    l_sql           VARCHAR2(32767);
+    l_columns       VARCHAR2(4000);
+    l_tables        VARCHAR2(4000);
+    l_joins         VARCHAR2(4000) := '';
+    l_conditions    VARCHAR2(4000) := '';
+    l_group_by      VARCHAR2(4000) := '';
+    l_having        VARCHAR2(4000) := '';
+    l_order_by      VARCHAR2(4000) := '';
+    l_union_sql     VARCHAR2(32767) := '';
     
-    -- JSON-объекты для парсинга
-    v_json_obj JSON_OBJECT_T;
-    v_columns_array JSON_ARRAY_T;
-    v_tables_array JSON_ARRAY_T;
-    v_joins_array JSON_ARRAY_T;
-    v_where_array JSON_ARRAY_T;
-    
-    -- Переменные для формирования запроса
-    v_select_clause VARCHAR2(4000) := 'SELECT ';
-    v_from_clause VARCHAR2(4000) := ' FROM ';
-    v_join_clause VARCHAR2(4000) := ' ';
-    v_where_clause VARCHAR2(4000) := ' ';
-    
-    -- Вспомогательные функции
-    
-    -- Функция для обработки вложенного подзапроса
-    FUNCTION process_subquery(p_subquery_json JSON_OBJECT_T) RETURN VARCHAR2 IS
-        v_subquery_type VARCHAR2(20);
-        v_field VARCHAR2(100);
-        v_operator VARCHAR2(20);
-        v_nested_json CLOB;
-        v_result VARCHAR2(4000);
-        v_nested_cursor SYS_REFCURSOR;
-        
-        -- Получаем внутренний JSON для подзапроса
-        v_nested_json_obj JSON_OBJECT_T;
-    BEGIN
-        -- Получаем параметры подзапроса
-        v_subquery_type := p_subquery_json.get_String('subquery_type');
-        v_field := p_subquery_json.get_String('field');
-        
-        -- Получаем JSON для вложенного запроса
-        v_nested_json := p_subquery_json.get_Object('subquery').to_Clob();
-        
-        -- Формируем часть запроса в зависимости от типа подзапроса
-        IF v_subquery_type IN ('IN', 'NOT IN') THEN
-            v_result := v_field || ' ' || v_subquery_type || ' (';
-            -- Добавляем вложенный подзапрос - упрощенный вариант
-            v_result := v_result || 'SELECT * FROM TABLE(execute_select_to_table(' || 
-                        DBMS_ASSERT.ENQUOTE_LITERAL(v_nested_json) || '))';
-            v_result := v_result || ')';
-            
-        ELSIF v_subquery_type IN ('EXISTS', 'NOT EXISTS') THEN
-            v_result := v_subquery_type || ' (';
-            -- Добавляем вложенный подзапрос - упрощенный вариант
-            v_result := v_result || 'SELECT * FROM TABLE(execute_select_to_table(' || 
-                        DBMS_ASSERT.ENQUOTE_LITERAL(v_nested_json) || '))';
-            
-            v_result := v_result || ')';
-        END IF;
-        
-        RETURN v_result;
-    END process_subquery;
-    
+    -- Для подсчёта элементов массивов
+    l_joins_length      INTEGER := 0;
+    l_union_length      INTEGER := 0;
 BEGIN
-    -- Парсинг JSON
-    v_json_obj := JSON_OBJECT_T.parse(p_json);
+    l_columns := REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.columns'), '[', ''), ']', ''), '"', '');
+    l_tables  := REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.tables'), '[', ''), ']', ''), '"', '');
     
-    -- Проверка типа запроса
-    IF v_json_obj.get_String('type') != 'SELECT' THEN
-        RAISE_APPLICATION_ERROR(-20001, 'Неверный тип запроса. Ожидается SELECT.');
-    END IF;
-    
-    -- Извлечение массивов из JSON
-    v_columns_array := v_json_obj.get_Array('columns');
-    v_tables_array := v_json_obj.get_Array('tables');
-    
-    -- Обработка столбцов (SELECT clause)
-    FOR i IN 0..v_columns_array.get_size - 1 LOOP
-        IF i > 0 THEN
-            v_select_clause := v_select_clause || ', ';
-        END IF;
-        v_select_clause := v_select_clause || v_columns_array.get_String(i);
-    END LOOP;
-    
-    -- Обработка таблиц (FROM clause)
-    FOR i IN 0..v_tables_array.get_size - 1 LOOP
-        IF i > 0 THEN
-            v_from_clause := v_from_clause || ', ';
-        END IF;
-        v_from_clause := v_from_clause || v_tables_array.get_String(i);
-    END LOOP;
-    
-    -- Обработка JOIN условий, если есть
-    IF v_json_obj.has('joins') THEN
-        v_joins_array := v_json_obj.get_Array('joins');
-        
-        FOR i IN 0..v_joins_array.get_size - 1 LOOP
-            DECLARE
-                v_join_obj JSON_OBJECT_T := v_joins_array.get_Object(i);
-                v_join_type VARCHAR2(20) := NVL(v_join_obj.get_String('type'), 'INNER JOIN');
-                v_table VARCHAR2(100) := v_join_obj.get_String('table');
-                v_condition VARCHAR2(1000) := v_join_obj.get_String('condition');
-            BEGIN
-                v_join_clause := v_join_clause || v_join_type || ' ' || v_table || ' ON ' || v_condition || ' ';
-            END;
+    IF JSON_EXISTS(p_json, '$.joins') THEN
+        LOOP
+            EXIT WHEN JSON_VALUE(p_json, '$.joins[' || l_joins_length || '].type') IS NULL;
+            l_joins_length := l_joins_length + 1;
+        END LOOP;
+
+        FOR i IN 0..l_joins_length-1 LOOP
+            l_joins := l_joins || ' ' ||
+                JSON_VALUE(p_json, '$.joins[' || i || '].type') || ' JOIN ' ||
+                JSON_VALUE(p_json, '$.joins[' || i || '].table') ||
+                ' ON ' || JSON_VALUE(p_json, '$.joins[' || i || '].on') || ' ';
         END LOOP;
     END IF;
-    
-    -- Обработка WHERE условий, если есть
-    IF v_json_obj.has('where') THEN
-        v_where_array := v_json_obj.get_Array('where');
-        IF v_where_array.get_size > 0 THEN
-            v_where_clause := ' WHERE ';
-            
-            FOR i IN 0..v_where_array.get_size - 1 LOOP
-                DECLARE
-                    v_where_obj JSON_OBJECT_T := v_where_array.get_Object(i);
-                    v_condition VARCHAR2(4000);
-                    v_connector VARCHAR2(10) := NVL(v_where_obj.get_String('connector'), '');
-                    v_is_subquery BOOLEAN := FALSE;
-                BEGIN
-                    -- Проверяем, является ли условие подзапросом
-                    IF v_where_obj.has('subquery') THEN
-                        v_is_subquery := TRUE;
-                        v_condition := process_subquery(v_where_obj);
-                    ELSE
-                        v_condition := v_where_obj.get_String('condition');
-                    END IF;
-                    
-                    -- Добавляем соединитель для условий (AND, OR)
-                    IF i > 0 AND v_connector IS NOT NULL THEN
-                        v_where_clause := v_where_clause || ' ' || v_connector || ' ';
-                    END IF;
-                    
-                    v_where_clause := v_where_clause || v_condition;
-                END;
-            END LOOP;
-        END IF;
+
+    IF JSON_EXISTS(p_json, '$.nested') THEN
+        DECLARE
+            l_nested_sql VARCHAR2(32767);
+            l_nested_operator VARCHAR2(20);
+            l_outer_column VARCHAR2(100);
+        BEGIN
+            -- В outer запросе поле, к которому применяется вложенный запрос
+            l_outer_column := JSON_VALUE(p_json, '$.conditions');
+            l_nested_operator := JSON_VALUE(p_json, '$.nested_operator');
+            DECLARE
+                l_n_columns VARCHAR2(4000);
+                l_n_tables  VARCHAR2(4000);
+                l_n_conditions VARCHAR2(4000) := '';
+            BEGIN
+                l_n_columns := REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.nested.columns'), '[', ''), ']', ''), '"', '');
+                l_n_tables  := REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.nested.tables'), '[', ''), ']', ''), '"', '');
+                IF JSON_EXISTS(p_json, '$.nested.conditions') THEN
+                    l_n_conditions := ' WHERE ' || JSON_VALUE(p_json, '$.nested.conditions');
+                END IF;
+                l_nested_sql := 'SELECT ' || l_n_columns || ' FROM ' || l_n_tables || l_n_conditions;
+            END;
+            l_conditions := ' WHERE ' || l_outer_column || ' ' || l_nested_operator || ' (' || l_nested_sql || ')';
+        END;
+    ELSIF JSON_EXISTS(p_json, '$.conditions') THEN
+        l_conditions := ' WHERE ' || JSON_VALUE(p_json, '$.conditions');
     END IF;
-    
-    -- Формирование полного SQL-запроса
-    v_query := v_select_clause || v_from_clause || v_join_clause || v_where_clause;
-    
-    DBMS_OUTPUT.PUT_LINE('Сгенерированный запрос: ' || v_query);
-    
-    -- Выполнение запроса и возврат курсора
-    OPEN v_cursor FOR v_query;
-    RETURN v_cursor;
-    
+
+    IF JSON_EXISTS(p_json, '$.group_by') THEN
+        l_group_by := ' GROUP BY ' || REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.group_by'), '[', ''), ']', ''), '"', '');
+    END IF;
+
+    IF JSON_EXISTS(p_json, '$.having') THEN
+        l_having := ' HAVING ' || JSON_VALUE(p_json, '$.having');
+    END IF;
+
+    IF JSON_EXISTS(p_json, '$.order_by') THEN
+        l_order_by := ' ORDER BY ' || REPLACE(REPLACE(REPLACE(JSON_QUERY(p_json, '$.order_by'), '[', ''), ']', ''), '"', '');
+    END IF;
+
+    l_sql := 'SELECT ' || l_columns || ' FROM ' || l_tables || l_joins || l_conditions || l_group_by || l_having || l_order_by;
+
+    DBMS_OUTPUT.PUT_LINE('Generated SQL: ' || l_sql);
+
+    OPEN l_cursor FOR l_sql;
+    RETURN l_cursor;
+
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20002, 'Ошибка при выполнении запроса: ' || SQLERRM || 
-                                ' Сгенерированный запрос: ' || v_query);
+        DECLARE
+            v_error_msg VARCHAR2(4000);
+        BEGIN
+            v_error_msg := 'Error: ' || SQLERRM;
+            OPEN l_cursor FOR SELECT v_error_msg AS message FROM dual;
+            RETURN l_cursor;
+        END;
 END execute_select;
 /
-
--- Вспомогательная функция для преобразования результатов запроса в таблицу
--- Это необходимо для вложенных запросов (отдельная функция для рекурсии)
-CREATE OR REPLACE FUNCTION execute_select_to_table(p_json CLOB) 
-RETURN SYS.ODCIVARCHAR2LIST PIPELINED IS
-    v_cursor SYS_REFCURSOR;
-    v_value VARCHAR2(4000);
-BEGIN
-    -- Используем execute_select для получения курсора
-    v_cursor := execute_select(p_json);
-    
-    -- Извлекаем результаты и передаем в конвейер
-    LOOP
-        FETCH v_cursor INTO v_value;
-        EXIT WHEN v_cursor%NOTFOUND;
-        PIPE ROW(v_value);
-    END LOOP;
-    
-    CLOSE v_cursor;
-    RETURN;
-EXCEPTION
-    WHEN OTHERS THEN
-        IF v_cursor%ISOPEN THEN
-            CLOSE v_cursor;
-        END IF;
-        RAISE;
-END execute_select_to_table;
-/ 
