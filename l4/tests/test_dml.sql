@@ -32,22 +32,23 @@ INSERT INTO employees (name, age, department_id, status) VALUES ('Charlie', 40, 
 COMMIT;
 
 -- Тест 1: INSERT — простой пример
+INSERT INTO test_table (id, name) VALUES (NULL, 'test');
 DECLARE
     l_cursor SYS_REFCURSOR;
     l_message VARCHAR2(4000);
 BEGIN
     l_cursor := execute_dml('{
         "type": "INSERT",
-        "table": "employees",
-        "columns": ["name", "age", "department_id", "status"],
-        "values": ["''John Doe''", "30", "1", "''Active''"]
+        "table": "test_table",
+        "columns": ["name"],
+        "values": ["''John Doe''"]
     }');
     FETCH l_cursor INTO l_message;
     DBMS_OUTPUT.PUT_LINE('Test INSERT (simple): ' || l_message);
     CLOSE l_cursor;
 
-    FOR rec IN (SELECT id, name, age, department_id, status FROM employees ORDER BY id) LOOP
-        DBMS_OUTPUT.PUT_LINE('ID: ' || rec.id || ', Name: ' || rec.name || ', Age: ' || rec.age || ', Department ID: ' || rec.department_id || ', Status: ' || rec.status);
+    FOR rec IN (SELECT id, name FROM test_table ORDER BY id) LOOP
+        DBMS_OUTPUT.PUT_LINE('ID: ' || rec.id || ', Name: ' || rec.name);
     END LOOP;
 END;
 /

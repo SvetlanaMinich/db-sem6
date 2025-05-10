@@ -138,7 +138,7 @@ BEGIN
             "table": "departments",
             "on": "employees.department_id = departments.id"
         }],
-        "conditions": "departments.name = ''Sales''"
+        "conditions": "departments.name = ''Sales'' OR departments.name = ''HR''"
     }');
     LOOP
         FETCH l_cursor INTO l_emp.name, l_emp.department;
